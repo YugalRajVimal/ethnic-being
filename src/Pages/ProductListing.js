@@ -1,8 +1,8 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FiSearch, FiHeart, FiStar } from "react-icons/fi";
-import { productAPI } from "./api";
+import { productAPI, cartAPI } from "./api";
 
 // Fallback static products (used if API is unavailable)
 const STATIC_PRODUCTS = [
@@ -20,9 +20,8 @@ const STATIC_PRODUCTS = [
   { id: 12, name: "Ikat Woven Jogger", price: 1899, original: 2799, tag: "SALE", category: "Bottoms", size: ["S","M","L","XL"], color: "Multi", image: "https://images.unsplash.com/photo-1622445275463-afa2ab738c34?w=600&q=80", rating: 4.6, reviews: 55, inStock: true },
 ];
 
-// Accurately normalize API product shape, especially sizes, inStock and original/tag
+// Normalization function unchanged
 function normalizeProduct(p) {
-  // If every size has zero or missing stock, mark as out of stock
   let isAllSizesOut = false;
   let sizesArr = [];
   if (Array.isArray(p.sizes) && p.sizes.length > 0) {
@@ -33,13 +32,11 @@ function normalizeProduct(p) {
     }));
     isAllSizesOut = sizesArr.every(s => s.stock === 0);
   }
-  // Allow forced inStock=false from API, but use size stock for accuracy
   const inStock = (typeof p.inStock === "boolean"
     ? p.inStock
-    : true // fallback if missing field
+    : true
   ) && !isAllSizesOut;
 
-  // Tag logic: Use from API (`tag`) or fallback rules
   const tag =
     typeof p.tag === "string" && p.tag
       ? p.tag
@@ -60,9 +57,7 @@ function normalizeProduct(p) {
     category: typeof p.category === "object" && p.category
       ? p.category.name || p.category
       : p.category || "Other",
-    // If sizes object, map to string array for filter/search UI usage:
     size: sizesArr.length > 0 ? sizesArr.map(s => s.size) : p.size || [],
-    // Also pass full detailed sizes for card footers etc.
     sizesDetailed: sizesArr,
     color: p.color || "—",
     image:
@@ -113,7 +108,33 @@ export default function ProductListing({
   const [hoveredProduct, setHoveredProduct] = useState(null);
   const [addedToCart, setAddedToCart] = useState(null);
 
-  // Fetch and filter with debounce
+  const [selectedSizes, setSelectedSizes] = useState({});
+  const [showSizePopup, setShowSizePopup] = useState(false);
+  const [popupProduct, setPopupProduct] = useState(null);
+  const [popupError, setPopupError] = useState("");
+
+  // BEGIN wishlist structure patch
+  // Accept "wishlist" as array of product objects OR array of IDs
+  // Use a Set of IDs for fast lookup
+  const wishlistIds = useMemo(() => {
+    if (Array.isArray(wishlist)) {
+      if (wishlist.length === 0) return new Set();
+      if (
+        typeof wishlist[0] === "object" &&
+        wishlist[0] !== null &&
+        ("_id" in wishlist[0] || "id" in wishlist[0])
+      ) {
+        // array of objects
+        return new Set(wishlist.map(item => item._id || item.id));
+      } else {
+        // array of id strings or numbers
+        return new Set(wishlist);
+      }
+    }
+    return new Set();
+  }, [wishlist]);
+  // END wishlist structure patch
+
   useEffect(() => {
     setLoading(true);
     const timer = setTimeout(async () => {
@@ -145,7 +166,6 @@ export default function ProductListing({
     return () => clearTimeout(timer);
   }, [search, activeCategory, sortBy, priceRange]);
 
-  // Local filtering/sorting applied on top of static fallback
   const displayProducts = apiError
     ? STATIC_PRODUCTS.filter((p) => {
         const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
@@ -160,15 +180,82 @@ export default function ProductListing({
       })
     : products;
 
-  const handleAddToCart = (product, e) => {
+  const [addingToCart, setAddingToCart] = useState({});
+  const handleAddToCart = async (product, e) => {
     e.stopPropagation();
-    addToCart(product);
-    setAddedToCart(product.id);
-    setTimeout(() => setAddedToCart(null), 1500);
+    const hasSizes = Array.isArray(product.sizesDetailed) && product.sizesDetailed.length > 0;
+    let selectedSize = hasSizes ? selectedSizes[product.id] : "";
+    if (hasSizes && !selectedSize) {
+      setPopupProduct(product);
+      setPopupError("");
+      setShowSizePopup(true);
+      return;
+    }
+
+    setAddingToCart(prev => ({ ...prev, [product.id]: true }));
+
+    try {
+      await cartAPI.add({
+        productId: product.id,
+        qty: 1,
+        selectedSize: selectedSize || "",
+      });
+      if (addToCart) addToCart(product);
+
+      setAddedToCart(product.id);
+      setTimeout(() => setAddedToCart(null), 1500);
+    } catch (err) {
+      alert("Could not add to cart. Please try again.");
+    } finally {
+      setAddingToCart(prev => ({ ...prev, [product.id]: false }));
+    }
   };
 
+  const handlePopupAddToCart = async () => {
+    if (
+      !popupProduct ||
+      !selectedSizes[popupProduct.id] ||
+      !selectedSizes[popupProduct.id].trim()
+    ) {
+      setPopupError("Please select a size.");
+      return;
+    }
+    setAddingToCart(prev => ({ ...prev, [popupProduct.id]: true }));
+
+    try {
+      await cartAPI.add({
+        productId: popupProduct.id,
+        qty: 1,
+        selectedSize: selectedSizes[popupProduct.id],
+      });
+      if (addToCart) addToCart(popupProduct);
+
+      setAddedToCart(popupProduct.id);
+      setTimeout(() => setAddedToCart(null), 1500);
+      setShowSizePopup(false);
+    } catch (err) {
+      alert("Could not add to cart. Please try again.");
+    } finally {
+      setAddingToCart(prev => ({ ...prev, [popupProduct.id]: false }));
+      setShowSizePopup(false);
+      setPopupError("");
+      setPopupProduct(null);
+    }
+  };
+
+  // --- CUSTOMIZED STYLE OBJECTS (BLACK/WHITE/RED THEME) ---
+  const RED = "#EF233C";
+  const WHITE = "#FFF";
+  const NEAR_WHITE = "#EDEDED";
+  const BLACK = "#101012";
+  const DARKER = "#191821";
+  const GREY = "#444";
+  const GREY_ALT = "#222126";
+  const CARD_HOVER = "#15151d";
+  const HIGHLIGHT = RED;
+
   const s = {
-    page: { background: "#FAF8F4", minHeight: "100vh", paddingTop: 80 },
+    page: { background: "#000000", minHeight: "100vh", paddingTop: 80 },
     header: {
       padding: "40px 40px 24px",
       maxWidth: 1400,
@@ -178,15 +265,21 @@ export default function ProductListing({
       fontFamily: "'Playfair Display', serif",
       fontWeight: 700,
       fontSize: "clamp(28px,4vw,42px)",
-      color: "#1A1612",
+      color: WHITE,
       letterSpacing: "0.03em",
+      textShadow: `0 2px 16px rgba(239,35,60,0.12)`,
+      borderBottom: `2px solid ${RED}`,
+      display: "inline-block",
+      paddingBottom: 4,
     },
     subtitle: {
       fontFamily: "'Cormorant Garamond', serif",
       fontStyle: "italic",
       fontSize: 16,
-      color: "#8C7B6B",
+      color: HIGHLIGHT,
       marginTop: 6,
+      letterSpacing: "0.04em",
+      textShadow: `0 1px 6px rgba(239,35,60,.1)`,
     },
     toolbar: {
       display: "flex",
@@ -201,8 +294,8 @@ export default function ProductListing({
       display: "flex",
       alignItems: "center",
       gap: 10,
-      background: "#FFF",
-      border: "1px solid #E2D9CE",
+      background: GREY_ALT,
+      border: `1px solid ${RED}`,
       borderRadius: 6,
       padding: "10px 16px",
       flex: "1 1 240px",
@@ -213,30 +306,33 @@ export default function ProductListing({
       background: "transparent",
       fontFamily: "'DM Sans'",
       fontSize: 13,
-      color: "#1A1612",
+      color: WHITE,
       width: "100%",
     },
     catBtn: (active) => ({
-      background: active ? "#1A1612" : "transparent",
-      color: active ? "#FAF8F4" : "#8C7B6B",
-      border: `1px solid ${active ? "#1A1612" : "#E2D9CE"}`,
+      background: active ? RED : "transparent",
+      color: active ? WHITE : NEAR_WHITE,
+      border: `1.2px solid ${active ? RED : GREY}`,
       padding: "8px 18px",
       borderRadius: 4,
       fontSize: 12,
-      fontWeight: 600,
+      fontWeight: 700,
       letterSpacing: "0.1em",
       cursor: "pointer",
       fontFamily: "'DM Sans'",
       transition: "all 0.2s",
+      outline: active ? `2px solid ${RED}` : undefined,
+      boxShadow: active ? `0 2px 12px ${RED}33` : undefined,
+      textShadow: active ? `0 1px 2px #53201657` : undefined,
     }),
     sortSelect: {
-      background: "#FFF",
-      border: "1px solid #E2D9CE",
+      background: GREY_ALT,
+      border: `1.2px solid ${RED}`,
       padding: "9px 16px",
       borderRadius: 6,
       fontSize: 12,
       fontFamily: "'DM Sans'",
-      color: "#1A1612",
+      color: RED,
       cursor: "pointer",
       outline: "none",
     },
@@ -249,26 +345,28 @@ export default function ProductListing({
       margin: "0 auto",
     },
     card: {
-      background: "#FFF",
+      background: GREY_ALT,
       borderRadius: 12,
       overflow: "hidden",
       cursor: "pointer",
-      boxShadow: "0 2px 8px rgba(26,22,18,0.06)",
-      transition: "box-shadow 0.3s",
+      boxShadow: "0 2px 18px rgba(239,35,60,0.04)",
+      transition: "box-shadow 0.3s, background 0.3s",
       position: "relative",
+      border: `1.5px solid transparent`,
     },
     imgWrap: {
       position: "relative",
       aspectRatio: "3/4",
       overflow: "hidden",
-      background: "#EEE8DE",
+      background: "#140e0c",
     },
     img: {
       width: "100%",
       height: "100%",
       objectFit: "cover",
-      transition: "transform 0.5s ease",
+      transition: "transform 0.5s cubic-bezier(.22,.68,.55,1.31)",
       display: "block",
+      filter: "brightness(0.975) contrast(1.07)",
     },
     tag: (t) => ({
       position: "absolute",
@@ -276,25 +374,27 @@ export default function ProductListing({
       left: 12,
       background:
         t === "SOLD OUT"
-          ? "#8C7B6B"
+          ? "#F35657"
           : t === "NEW"
-          ? "#2C6E49"
+          ? "#EF233C"
           : t === "SALE"
-          ? "#C4622D"
-          : "#8C7B6B",
-      color: "#FFF",
+          ? "#F1976F"
+          : "#F35657",
+      color: "#fff",
       fontSize: 10,
-      fontWeight: 700,
+      fontWeight: 800,
       letterSpacing: "0.15em",
       padding: "4px 10px",
       borderRadius: 2,
       textTransform: "uppercase",
+      boxShadow: "0 2px 4px #3e1c2934",
+      border: "1.2px solid #fff1",
     }),
     heartBtn: {
       position: "absolute",
       top: 12,
       right: 12,
-      background: "#FFF",
+      background: "rgba(16,16,18,0.92)",
       borderRadius: "50%",
       width: 34,
       height: 34,
@@ -302,34 +402,43 @@ export default function ProductListing({
       alignItems: "center",
       justifyContent: "center",
       cursor: "pointer",
-      boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-      border: "none",
+      boxShadow: `0 2px 8px ${RED}40`,
+      border: `2px solid ${RED}`,
+      transition: "background 0.16s",
     },
     addBtn: {
       position: "absolute",
       bottom: 0,
       left: 0,
       right: 0,
-      background: "#1A1612",
-      color: "#FAF8F4",
+      background: HIGHLIGHT,
+      color: WHITE,
       border: "none",
       padding: "14px",
-      fontSize: 12,
-      fontWeight: 600,
-      letterSpacing: "0.12em",
+      fontSize: 13,
+      fontWeight: 800,
+      letterSpacing: "0.14em",
       cursor: "pointer",
       fontFamily: "'DM Sans'",
-      transition: "background 0.2s",
+      transition: "background 0.2s, color 0.2s",
+      // borderBottomLeftRadius: 10,
+      // borderBottomRightRadius: 10,
+      borderTopLeftRadius: 10,
+      borderTopRightRadius: 10,
+      borderTop: "1px solid #ef233c33",
+      textShadow: "0 1px 2px #2c021b38",
     },
     cardBody: {
       padding: "14px 16px 16px",
     },
     productName: {
       fontFamily: "'Playfair Display', serif",
-      fontWeight: 600,
-      fontSize: 15,
-      color: "#1A1612",
+      fontWeight: 700,
+      fontSize: 16,
+      color: "#fff",
       marginBottom: 4,
+      textShadow: `0 1px 8px #e7414130`,
+      letterSpacing: ".01em",
     },
     stars: {
       display: "flex",
@@ -345,19 +454,25 @@ export default function ProductListing({
     },
     price: {
       fontFamily: "'DM Sans'",
-      fontWeight: 700,
+      fontWeight: 900,
       fontSize: 15,
-      color: "#C4622D",
+      color: RED,
+      textShadow: `0 1px 4px #fff6`,
+      borderBottom: `2px solid ${RED}`,
+      borderRadius: 2,
+      padding: "1px 7px",
+      background: "#24121c88",
     },
     original: {
       fontFamily: "'DM Sans'",
       fontSize: 13,
-      color: "#B0A090",
+      color: "#F1976F",
       textDecoration: "line-through",
+      opacity: 0.8,
     },
     skeleton: {
       background:
-        "linear-gradient(90deg, #F0EBE3 25%, #FAF8F4 50%, #F0EBE3 75%)",
+        "linear-gradient(90deg, #222126 25%, #191821 50%, #222126 75%)",
       backgroundSize: "200% 100%",
       animation: "shimmer 1.5s infinite",
       borderRadius: 8,
@@ -369,27 +484,127 @@ export default function ProductListing({
       flexWrap: "wrap",
       fontFamily: "'DM Sans'",
       fontSize: 12,
-      color: "#6c635b",
+      color: "#f8d9d3",
       minHeight: 18,
     },
-    sizePill: (stock) => ({
+    sizePill: (stock, isActive) => ({
       padding: "2px 9px",
       borderRadius: 8,
-      border: "1px solid #E2D9CE",
-      background: stock === 0 ? "#E2D9CE" : "#F7F6EF",
-      color: stock === 0 ? "#B0A090" : "#5A5048",
-      opacity: stock === 0 ? 0.5 : 1,
-      fontWeight: 500,
+      border: isActive ? `2.5px solid ${RED}` : `1px solid #EF233C44`,
+      background: stock === 0 ? "#EF233C33" : "#253249",
+      color: stock === 0 ? "#EF233C55" : isActive ? RED : WHITE,
+      opacity: stock === 0 ? 0.45 : 1,
+      fontWeight: isActive ? 900 : 600,
+      cursor: stock === 0 ? "not-allowed" : "pointer",
+      boxShadow: isActive ? `0 2px 8px ${RED}3b` : undefined,
+      outline: isActive ? `2px solid ${RED}` : undefined,
+      position: "relative",
+      textShadow: "0 1px 2px #2b0c1250",
+      letterSpacing: ".1em",
     }),
     stockStatus: (inStock) => ({
       fontSize: 12,
-      fontWeight: 600,
-      color: inStock ? "#2C6E49" : "#B0A090",
+      fontWeight: 800,
+      color: inStock ? WHITE : RED,
       marginTop: 10,
       marginBottom: 2,
       fontFamily: "'DM Sans'",
       letterSpacing: "0.05em",
+      textShadow: `0 1px 3px ${inStock ? WHITE : RED}40`,
     }),
+    // P O P U P  modal
+    modalBackdrop: {
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(16,16,18,0.85)",
+      zIndex: 1001,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    modal: {
+      background: GREY_ALT,
+      borderRadius: 12,
+      boxShadow: `0 8px 32px ${RED}20`,
+      padding: "32px 28px 24px",
+      minWidth: 320,
+      maxWidth: "calc(100vw - 32px)",
+      zIndex: 1002,
+      position: "relative",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      border: `2.2px solid ${RED}99`,
+    },
+    modalTitle: {
+      fontFamily: "'Playfair Display', serif",
+      fontWeight: 800,
+      fontSize: 21,
+      color: RED,
+      marginBottom: 8,
+      marginTop: -4,
+      textShadow: "0 1px 9px #ef233c29, 0 2px #222",
+      letterSpacing: ".1em"
+    },
+    modalBodyText: {
+      fontFamily: "'DM Sans'",
+      color: WHITE,
+      fontSize: 15,
+      marginBottom: 12,
+      textAlign: "center",
+      maxWidth: 320,
+      textShadow: "0 1px 7px #07050846",
+    },
+    modalClose: {
+      position: "absolute",
+      right: 20,
+      top: 18,
+      fontSize: 23,
+      color: RED,
+      cursor: "pointer",
+      border: "none",
+      background: "transparent",
+      fontWeight: 500,
+      transition: "color 0.2s",
+      outline: "none",
+    },
+    modalError: {
+      color: RED,
+      fontSize: 13,
+      margin: "4px 0 8px",
+      textAlign: "center",
+      minHeight: 18,
+      fontWeight: "bold",
+      letterSpacing: ".08em"
+    },
+    modalAddBtn: {
+      background: RED,
+      color: WHITE,
+      border: "none",
+      borderRadius: 6,
+      fontSize: 14,
+      fontWeight: 900,
+      padding: "10px 30px",
+      marginTop: 15,
+      marginBottom: -4,
+      fontFamily: "'DM Sans'",
+      transition: "background 0.2s",
+      cursor: "pointer",
+      letterSpacing: "0.12em",
+      outline: `2px solid ${RED}`,
+      boxShadow: "0 2px 10px #ef233c82",
+    },
+    modalSizeRow: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap",
+      marginBottom: 4,
+      justifyContent: "center",
+      marginTop: 6,
+    },
   };
 
   const SkeletonCard = () => (
@@ -399,7 +614,7 @@ export default function ProductListing({
           ...s.imgWrap,
           animation: "shimmer 1.5s infinite",
           background:
-            "linear-gradient(90deg, #F0EBE3 25%, #FAF8F4 50%, #F0EBE3 75%)",
+            "linear-gradient(90deg, #1e191a 25%, #191821 45%, #1e191a 75%)",
           backgroundSize: "200% 100%",
         }}
       />
@@ -415,9 +630,77 @@ export default function ProductListing({
     </div>
   );
 
+  // --- Size selection modal pop-up ---
+  const SizeSelectPopup = ({ product, onClose }) => {
+    if (!product) return null;
+    const sizes = product.sizesDetailed || [];
+    const disabledAll = sizes.every(s => s.stock === 0);
+    return (
+      <div style={s.modalBackdrop} onClick={onClose}>
+        <motion.div
+          style={s.modal}
+          initial={{ scale: 0.92, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.88, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 22, mass: 0.8 }}
+          onClick={e => e.stopPropagation()}
+        >
+          <button style={s.modalClose} onClick={onClose} aria-label="Close">
+            ×
+          </button>
+          <div style={s.modalTitle}>Select Size</div>
+          <div style={s.modalBodyText}>{product.name}</div>
+          <div style={s.modalSizeRow}>
+            {sizes.map(sz => {
+              const isActive = selectedSizes[product.id] === sz.size && sz.stock > 0;
+              return (
+                <span
+                  key={sz.id || sz.size}
+                  style={s.sizePill(sz.stock, isActive)}
+                  title={sz.stock > 0 ? `In stock: ${sz.stock}` : "Sold out"}
+                  tabIndex={sz.stock === 0 ? -1 : 0}
+                  aria-disabled={sz.stock === 0 ? "true" : undefined}
+                  onClick={() => {
+                    if (sz.stock === 0) return;
+                    setSelectedSizes(prev => ({
+                      ...prev,
+                      [product.id]: sz.size,
+                    }));
+                    setPopupError(""); // clear error if any
+                  }}
+                >
+                  {sz.size}
+                  {typeof sz.stock === "number" && (
+                    <span style={{ fontSize: 10, marginLeft: 3 }}>
+                      {sz.stock === 0 ? "×" : sz.stock}
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+          <div style={s.modalError}>{popupError ? popupError : ""}</div>
+          <button
+            style={{
+              ...s.modalAddBtn,
+              opacity: addingToCart[product.id] ? 0.7 : 1,
+              pointerEvents: addingToCart[product.id] ? "none" : "auto",
+            }}
+            disabled={addingToCart[product.id] || disabledAll}
+            onClick={handlePopupAddToCart}
+          >
+            {addingToCart[product.id] ? "ADDING..." : "Add to Cart"}
+          </button>
+        </motion.div>
+      </div>
+    );
+  };
+
   return (
     <div style={s.page}>
-      <style>{`@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }`}</style>
+      <style>{`@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+      ::selection { background: #ef233caa !important; color: #fff; }
+      `}</style>
       <div style={s.header}>
         <motion.h1
           style={s.title}
@@ -431,7 +714,7 @@ export default function ProductListing({
 
       <div style={s.toolbar}>
         <div style={s.searchBox}>
-          <FiSearch size={15} color="#8C7B6B" />
+          <FiSearch size={15} color={RED} />
           <input
             style={s.searchInput}
             placeholder="Search products..."
@@ -463,13 +746,29 @@ export default function ProductListing({
           style={{
             fontFamily: "'DM Sans'",
             fontSize: 13,
-            color: "#8C7B6B",
+            color: RED,
             marginLeft: "auto",
+            fontWeight: 700,
+            letterSpacing: ".04em"
           }}
         >
           {loading ? "Loading…" : `${displayProducts.length} products`}
         </span>
       </div>
+
+      {/* Size Select Pop-up Modal */}
+      <AnimatePresence>
+        {showSizePopup && (
+          <SizeSelectPopup
+            product={popupProduct}
+            onClose={() => {
+              setShowSizePopup(false);
+              setPopupProduct(null);
+              setPopupError("");
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       <div style={s.grid}>
         {loading ? (
@@ -479,22 +778,83 @@ export default function ProductListing({
         ) : (
           <AnimatePresence>
             {displayProducts.map((p, i) => {
-              // If using API products, show more accurate stock status/size info if present
               const hasSizes = Array.isArray(p.sizesDetailed) && p.sizesDetailed.length > 0;
               const isSoldOut =
                 (typeof p.inStock === "boolean" && !p.inStock) ||
                 (hasSizes && p.sizesDetailed.every((s) => s.stock === 0));
-              const stockStatusLabel = isSoldOut
-                ? "Out of Stock"
-                : hasSizes
-                ? "Available"
-                : "In Stock";
 
-              // For original comparison
               const showDiscount =
                 typeof p.original === "number" &&
                 p.original > p.price &&
                 p.price > 0;
+
+              // For size selection: if sizes exist & any in stock, show clickable pills
+              let renderSizes = null;
+              if (hasSizes && !isSoldOut) {
+                renderSizes = (
+                  <div style={s.sizeRow}>
+                    {p.sizesDetailed.map((sz) => {
+                      const isActive =
+                        selectedSizes[p.id] === sz.size && sz.stock > 0;
+                      return (
+                        <span
+                          key={sz.id || sz.size}
+                          style={s.sizePill(sz.stock, isActive)}
+                          title={
+                            sz.stock > 0
+                              ? `In stock: ${sz.stock}`
+                              : "Sold out"
+                          }
+                          onClick={
+                            sz.stock === 0
+                              ? undefined
+                              : (e) => {
+                                  e.stopPropagation();
+                                  setSelectedSizes((prev) => ({
+                                    ...prev,
+                                    [p.id]: sz.size,
+                                  }));
+                                }
+                          }
+                          tabIndex={sz.stock === 0 ? -1 : 0}
+                          aria-disabled={sz.stock === 0 ? "true" : undefined}
+                        >
+                          {sz.size}
+                          {typeof sz.stock === "number" && (
+                            <span style={{ fontSize: 10, marginLeft: 3 }}>
+                              {sz.stock === 0 ? "×" : sz.stock}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              } else if (hasSizes && isSoldOut) {
+                renderSizes = (
+                  <div style={s.sizeRow}>
+                    {p.sizesDetailed.map((sz) => (
+                      <span
+                        key={sz.id || sz.size}
+                        style={s.sizePill(sz.stock, false)}
+                        title="Sold out"
+                        aria-disabled="true"
+                      >
+                        {sz.size}
+                        {typeof sz.stock === "number" && (
+                          <span style={{ fontSize: 10, marginLeft: 3 }}>
+                            ×
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                );
+              }
+
+              // PATCH: wishlist structure
+              // We use wishlistIds for determining wishlisted state!
+              const wishlisted = wishlistIds.has(p.id) || wishlistIds.has(p._id);
 
               return (
                 <motion.div
@@ -508,8 +868,10 @@ export default function ProductListing({
                     ...s.card,
                     boxShadow:
                       hoveredProduct === p.id
-                        ? "0 8px 32px rgba(26,22,18,0.14)"
-                        : "0 2px 8px rgba(26,22,18,0.06)",
+                        ? `0 8px 32px ${RED}29`
+                        : "0 2px 8px rgba(239,35,60,0.02)",
+                    background: hoveredProduct === p.id ? CARD_HOVER : s.card.background,
+                    border: hoveredProduct === p.id ? `1.5px solid ${RED}` : s.card.border,
                   }}
                   onMouseEnter={() => setHoveredProduct(p.id)}
                   onMouseLeave={() => setHoveredProduct(null)}
@@ -533,18 +895,22 @@ export default function ProductListing({
                     <button
                       style={{
                         ...s.heartBtn,
-                        color: wishlist.includes(p.id) ? "#C4622D" : "#8C7B6B",
+                        background: wishlisted ? RED : s.heartBtn.background,
+                        color: wishlisted ? "#fff" : RED,
+                        borderColor: wishlisted ? "#fff" : RED,
+                        boxShadow: wishlisted ? "0 2px 12px #ef233c66" : s.heartBtn.boxShadow,
                       }}
                       onClick={(e) => {
                         e.stopPropagation();
+                        // PATCH: get ID to toggleWishlist
                         toggleWishlist(p.id);
                       }}
                     >
                       <FiHeart
-                        size={15}
-                        fill={wishlist.includes(p.id) ? "#C4622D" : "none"}
+                        size={16}
+                        fill={wishlisted ? RED : "none"}
                         color={
-                          wishlist.includes(p.id) ? "#C4622D" : "#8C7B6B"
+                          wishlisted ? "#fff" : RED
                         }
                       />
                     </button>
@@ -553,30 +919,45 @@ export default function ProductListing({
                         style={{
                           ...s.addBtn,
                           background:
-                            addedToCart === p.id ? "#2C6E49" : "#1A1612",
+                            addedToCart === p.id
+                              ? "#1affd3"
+                              : HIGHLIGHT,
+                          color: addedToCart === p.id ? RED : "#fff",
+                          opacity: addingToCart[p.id] ? 0.65 : 1,
+                          pointerEvents: addingToCart[p.id] ? "none" : "auto",
                         }}
                         initial={false}
                         animate={{
                           y: hoveredProduct === p.id ? 0 : 48,
                           opacity: hoveredProduct === p.id ? 1 : 0,
                         }}
-                        onClick={(e) => handleAddToCart(p, e)}
+                        onClick={e => handleAddToCart(p, e)}
+                        disabled={!!addingToCart[p.id]}
                       >
-                        {addedToCart === p.id ? "✓ ADDED" : "ADD TO CART"}
+                        {addingToCart[p.id]
+                          ? "ADDING..."
+                          : addedToCart === p.id
+                          ? "✓ ADDED"
+                          : hasSizes
+                            ? selectedSizes[p.id]
+                              ? `ADD (${selectedSizes[p.id]})`
+                              : "ADD TO CART"
+                            : "ADD TO CART"}
                       </motion.button>
                     ) : (
                       <div
                         style={{
                           ...s.addBtn,
-                          background: "#8C7B6B",
+                          background: "#18161b",
+                          color: RED,
                           textAlign: "center",
                           position: "absolute",
                           bottom: 0,
                           left: 0,
                           right: 0,
                           cursor: "not-allowed",
-                          fontWeight: 700,
-                          letterSpacing: "0.1em",
+                          fontWeight: 900,
+                          letterSpacing: "0.12em",
                         }}
                       >
                         SOLD OUT
@@ -590,43 +971,23 @@ export default function ProductListing({
                       {isSoldOut ? "Out of Stock" : "In Stock"}
                     </div>
                     {/* Sizes display if present */}
-                    {hasSizes && (
-                      <div style={s.sizeRow}>
-                        {p.sizesDetailed.map((sz) => (
-                          <span
-                            key={sz.id || sz.size}
-                            style={s.sizePill(sz.stock)}
-                            title={
-                              sz.stock > 0
-                                ? `In stock: ${sz.stock}`
-                                : "Sold out"
-                            }
-                          >
-                            {sz.size}
-                            {typeof sz.stock === "number" && (
-                              <span style={{ fontSize: 10, marginLeft: 3 }}>
-                                {sz.stock === 0 ? "×" : sz.stock}
-                              </span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    {renderSizes}
                     {p.rating > 0 && (
                       <div style={s.stars}>
                         {[...Array(5)].map((_, i) => (
                           <FiStar
                             key={i}
-                            size={11}
-                            fill={i < Math.floor(p.rating) ? "#B8922A" : "none"}
-                            color="#B8922A"
+                            size={12}
+                            fill={i < Math.floor(p.rating) ? RED : "none"}
+                            color={RED}
                           />
                         ))}
                         <span
                           style={{
                             fontFamily: "'DM Sans'",
                             fontSize: 11,
-                            color: "#8C7B6B",
+                            color: "#fff",
+                            fontWeight: "bold",
                           }}
                         >
                           ({p.reviews})
@@ -648,9 +1009,10 @@ export default function ProductListing({
                             style={{
                               marginLeft: "auto",
                               fontFamily: "'DM Sans'",
-                              fontSize: 11,
-                              color: "#2C6E49",
-                              fontWeight: 600,
+                              fontSize: 12,
+                              color: RED,
+                              fontWeight: 800,
+                              paddingLeft: 6,
                             }}
                           >
                             {Math.round(
