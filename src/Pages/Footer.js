@@ -13,7 +13,7 @@ const Footer = ({ navigate }) => {
     }
   };
 
-  // Updated menu links for Ethnic Being
+  // Updated menu links for UNLEASH CLUB
   const menuLinks = [
     { label: "HOME", page: "home" },
     { label: "SHOP", page: "shop" },
@@ -22,7 +22,7 @@ const Footer = ({ navigate }) => {
     { label: "CONTACT", page: "contact" },
   ];
 
-  // Updated customer care links for Ethnic Being
+  // Updated customer care links for UNLEASH CLUB
   const customerCareLinks = [
     { label: "TRACK ORDER", page: "track-order" },
     { label: "SIZE GUIDE", page: "size-guide" },
@@ -31,7 +31,7 @@ const Footer = ({ navigate }) => {
     { label: "CONTACT US", page: "contact" },
   ];
 
-  // Updated socialLinks for Ethnic Being (using Facebook and updating hrefs)
+  // Updated socialLinks for UNLEASH CLUB (using Facebook and updating hrefs)
   const socialLinks = [
     { icon: <FaInstagram size={20} />, href: "https://instagram.com/ethnicbeing", label: "Instagram" },
     { icon: <FaWhatsapp size={20} />, href: "https://wa.me/919999999999", label: "WhatsApp" },
@@ -217,7 +217,7 @@ const Footer = ({ navigate }) => {
             overflow: "hidden",
             textOverflow: "clip",
           }}>
-            ETHNIC BEING
+            UNLEASH CLUB
           </p>
           <p style={{
             fontFamily: "'Barlow Condensed', sans-serif",
@@ -249,7 +249,7 @@ const Footer = ({ navigate }) => {
           fontSize: "clamp(11px,1.1vw,13px)",
           color: "rgba(255,255,255,0.35)",
         }}>
-          © 2026 Ethnic Being. All rights reserved.
+          © 2026 UNLEASH CLUB. All rights reserved.
         </p>
         <a
           href="#"

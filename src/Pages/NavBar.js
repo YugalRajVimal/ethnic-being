@@ -97,7 +97,7 @@ const NavBar = ({ navigate, cartCount, wishlistCount, user }) => {
                 cursor: "pointer", userSelect: "none", lineHeight: 1,
               }}
             >
-              ETHNIC BEING
+              UNLEASH CLUB
               {/* <span style={{ display: "block", color: "#e8003d", fontSize: "0.55em", letterSpacing: "0.15em", fontWeight: 700 }}>
                 STREETWEAR CO.
               </span> */}
@@ -203,7 +203,7 @@ const NavBar = ({ navigate, cartCount, wishlistCount, user }) => {
                   fontFamily: "'Barlow Condensed', 'Impact', sans-serif",
                   fontWeight: 800, fontSize: 20, color: "#fff", letterSpacing: "0.08em",
                 }}>
-                  ETHNIC BEING
+                  UNLEASH CLUB
                   {/* <span style={{ display: "block", color: "#e8003d", fontSize: "0.6em", letterSpacing: "0.15em", fontWeight: 700 }}>
                     STREETWEAR CO.
                   </span> */}
